@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 from PIL import Image
 from PIL.ImageQt import ImageQt
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout, QFrame, QFileDialog, QSpinBox, QListWidget, QListWidgetItem
-from PyQt5.QtGui import QPixmap, QPainter
+from PyQt5.QtGui import QPixmap, QPainter, QIcon
 from PyQt5 import QtCore, Qt
 
 
@@ -27,8 +27,7 @@ def image_mat(images, rows, cols):
     return canvas
 
 
-def load_image(image_path, crop):
-    img = Image.open(image_path)
+def prepare_image(img, crop):
     x, y = img.size
     if crop > 0:
         img = img.crop((crop, crop, x - crop, y - crop))
@@ -39,26 +38,11 @@ def load_image(image_path, crop):
     return img.resize((x, y))
 
 
-def load_dir(dir_path):
-    names = os.listdir(dir_path)
-    names.sort()
-    for name in names:
-        img_path = os.path.join(dir_path, name)
-        yield load_image(img_path)
-
-
-def main(dirpath, rows, cols, outpath):
-    images = list(load_dir(dirpath))
-    result = image_mat(images, rows, cols)
-    result.save(outpath)
-    return result
-
-
-def get_image(image_paths, rows, cols, crop):
-    images = []
-    for path in image_paths:
-        images.append(load_image(path, crop))
-    return image_mat(images, rows, cols)
+def get_image(images, rows, cols, crop):
+    prepared_images = []
+    for image in images:
+        prepared_images.append(prepare_image(image, crop))
+    return image_mat(prepared_images, rows, cols)
 
 
 class ImageLabel(QLabel):
@@ -77,7 +61,6 @@ class ImageLabel(QLabel):
         # start painting the label from left upper corner
         point.setX((size.width() - scaledPix.width())//2)
         point.setY((size.height() - scaledPix.height())//2)
-        # print(point.x(), ' ', point.y())
         painter.drawPixmap(point, scaledPix)
     
     def onImageChange(self, img):
@@ -104,10 +87,26 @@ class FileList(QListWidget):
     def __init__(self, drop_action) -> None:
         super().__init__()
         self.drop_action = drop_action
+        self.setIconSize(QtCore.QSize(50, 50))
     
     def dropEvent(self, event):
         super().dropEvent(event)
         self.drop_action()
+
+
+class FileListItem(QListWidgetItem):
+
+    def __init__(self, filepath) -> None:
+        super().__init__()
+        name = os.path.split(filepath)[1]
+        self.setText(name)
+        self.filepath = filepath
+        self.img = Image.open(self.filepath)
+        self.img_resized = self.img.resize((50, 50))
+        self.qim = ImageQt(self.img_resized)
+        self.icon_pixmap = QPixmap.fromImage(self.qim)
+        self.icon = QIcon(self.icon_pixmap)
+        self.setIcon(self.icon)
 
 
 class MainWindow(QWidget):
@@ -146,8 +145,6 @@ class MainWindow(QWidget):
         self.file_list = FileList(self.update_image)
         self.file_list.setDragDropMode(Qt.QAbstractItemView.InternalMove)
         self.control_layout.addWidget(self.file_list)
-        # align everything
-        self.control_layout.addStretch()
         # save button
         self.save_button = QPushButton('Save Result')
         self.save_button.clicked.connect(self.save_result)
@@ -158,7 +155,7 @@ class MainWindow(QWidget):
         self.img_layout = ImageLayout(self.img)
         
         layout = QHBoxLayout()
-        layout.addLayout(self.img_layout)
+        layout.addLayout(self.img_layout, stretch=1)
         layout.addLayout(self.control_layout)
         self.setLayout(layout)
     
@@ -170,12 +167,12 @@ class MainWindow(QWidget):
         while self.file_list.count() > 0:
             self.file_list.takeItem(0)
         for filename in filenames:
-            self.file_list.addItem(QListWidgetItem(filename))
+            self.file_list.addItem(FileListItem(filename))
         self.update_image()
     
     def update_image(self):
-        filenames = [self.file_list.item(i).text() for i in range(self.file_list.count())]
-        self.img = get_image(filenames, self.rows.value(), self.cols.value(), self.crop.value())
+        images = [self.file_list.item(i).img for i in range(self.file_list.count())]
+        self.img = get_image(images, self.rows.value(), self.cols.value(), self.crop.value())
         self.img_layout.onImageChange(self.img)
     
     def save_result(self):
